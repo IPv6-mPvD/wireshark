@@ -249,6 +249,15 @@ static int hf_icmpv6_opt_6cio_unassigned2 = -1;
 
 static int hf_icmpv6_opt_captive_portal = -1;
 
+static int hf_icmpv6_opt_pvdid_flag = -1;
+static int hf_icmpv6_opt_pvdid_flag_h = -1;
+static int hf_icmpv6_opt_pvdid_flag_l = -1;
+static int hf_icmpv6_opt_pvdid_flag_a = -1;
+static int hf_icmpv6_opt_pvdid_flag_reserved = -1;
+static int hf_icmpv6_opt_pvdid_sequence = -1;
+static int hf_icmpv6_opt_pvdid_fqdn = -1;
+static int hf_icmpv6_opt_pvdid_padding = -1;
+
 /* RFC 2710: Multicast Listener Discovery for IPv6 */
 static int hf_icmpv6_mld_mrd = -1;
 static int hf_icmpv6_mld_multicast_address = -1;
@@ -601,6 +610,7 @@ static gint ett_icmpv6_opt_name = -1;
 static gint ett_icmpv6_cga_param_name = -1;
 static gint ett_icmpv6_mpl_seed_info = -1;
 static gint ett_icmpv6_mpl_seed_info_bm = -1;
+static gint ett_icmpv6_flag_pvdid = -1;
 
 static expert_field ei_icmpv6_invalid_option_length = EI_INIT;
 static expert_field ei_icmpv6_undecoded_option = EI_INIT;
@@ -928,6 +938,7 @@ static const true_false_string tfs_ni_flag_a = {
 #define ND_OPT_AUTH_BORDER_ROUTER       35
 #define ND_OPT_6CIO                     36
 #define ND_OPT_CAPPORT                  37
+#define ND_OPT_PVDID                    254
 
 static const value_string option_vals[] = {
 /*  1 */   { ND_OPT_SOURCE_LINKADDR,           "Source link-layer address" },
@@ -971,7 +982,7 @@ static const value_string option_vals[] = {
    { 139,                              "CARD Reply" },                             /* [RFC4065] */
 /* 140-252 Unassigned */
    { 253,                              "RFC3692-style Experiment 1" },             /* [RFC4727] */
-   { 254,                              "RFC3692-style Experiment 2" },             /* [RFC4727] */
+   { ND_OPT_PVDID,                     "PVD ID Experiment" },                      /* draft-ietf-intarea-provisioning-domains */
    { 0,                                NULL }
 };
 
@@ -1578,6 +1589,43 @@ static icmp_transaction_t *transaction_end(packet_info *pinfo, proto_tree *tree,
     return icmpv6_trans;
 
 } /* transaction_end() */
+
+static int
+dissect_icmpv6_nd_ra_header(tvbuff_t *tvb, int offset, proto_tree *tree)
+{
+  /* Router advertisement */
+  static const int * nd_ra_flags[] = {
+      &hf_icmpv6_nd_ra_flag_m,
+      &hf_icmpv6_nd_ra_flag_o,
+      &hf_icmpv6_nd_ra_flag_h,
+      &hf_icmpv6_nd_ra_flag_prf,
+      &hf_icmpv6_nd_ra_flag_p,
+      &hf_icmpv6_nd_ra_flag_rsv,
+      NULL
+  };
+
+  /* Current hop limit */
+  proto_tree_add_item(tree, hf_icmpv6_nd_ra_cur_hop_limit, tvb, offset, 1, ENC_BIG_ENDIAN);
+  offset += 1;
+
+  /* Flags */
+  proto_tree_add_bitmask(tree, tvb, offset, hf_icmpv6_nd_ra_flag, ett_icmpv6_flag_ra, nd_ra_flags, ENC_BIG_ENDIAN);
+  offset += 1;
+
+  /* Router lifetime */
+  proto_tree_add_item(tree, hf_icmpv6_nd_ra_router_lifetime, tvb, offset, 2, ENC_BIG_ENDIAN);
+  offset += 2;
+
+  /* Reachable time */
+  proto_tree_add_item(tree, hf_icmpv6_nd_ra_reachable_time, tvb, offset, 4, ENC_BIG_ENDIAN);
+  offset += 4;
+
+  /* Retrans timer */
+  proto_tree_add_item(tree, hf_icmpv6_nd_ra_retrans_timer, tvb, offset, 4, ENC_BIG_ENDIAN);
+  offset += 4;
+
+  return offset;
+}
 
 static int
 dissect_icmpv6_nd_opt(tvbuff_t *tvb, int offset, packet_info *pinfo, proto_tree *tree)
@@ -2474,6 +2522,57 @@ dissect_icmpv6_nd_opt(tvbuff_t *tvb, int offset, packet_info *pinfo, proto_tree 
                 PROTO_ITEM_SET_URL(ti_cp);
                 opt_offset += opt_len - 2;
 
+            }
+            break;
+            case ND_OPT_PVDID: /* PVD ID Experiment (254) */
+            {
+              static const int * pvdid_flag[] = {
+                  &hf_icmpv6_opt_pvdid_flag_h,
+                  &hf_icmpv6_opt_pvdid_flag_l,
+                  &hf_icmpv6_opt_pvdid_flag_a,
+                  &hf_icmpv6_opt_pvdid_flag_reserved,
+                  NULL
+              };
+              int pvdid_len;
+              const guchar *pvdid_name;
+              guint8 flags;
+              int padding;
+
+              flags = tvb_get_guint8(tvb, opt_offset);
+
+              /* Flags */
+              proto_tree_add_bitmask(icmp6opt_tree, tvb, opt_offset, hf_icmpv6_opt_pvdid_flag, ett_icmpv6_flag_pvdid, pvdid_flag, ENC_BIG_ENDIAN);
+              opt_offset += 2;
+
+              /* Sequence number */
+              proto_tree_add_item(icmp6opt_tree, hf_icmpv6_opt_pvdid_sequence, tvb, opt_offset, 2, ENC_BIG_ENDIAN);
+              opt_offset += 2;
+
+              /* PvD ID FQDN */
+              used_bytes = get_dns_name(tvb, opt_offset, 0, opt_offset, &pvdid_name, &pvdid_len);
+              proto_tree_add_string(icmp6opt_tree, hf_icmpv6_opt_pvdid_fqdn, tvb, opt_offset, used_bytes, format_text(wmem_packet_scope(), pvdid_name, pvdid_len));
+              proto_item_append_text(ti, " %s", pvdid_name);
+              opt_offset += used_bytes;
+
+              /* Padding */
+              padding = (((opt_offset - offset) + 7) & 0xfffffff8) - (opt_offset - offset);
+              if (padding) {
+                proto_tree_add_item(icmp6opt_tree, hf_icmpv6_opt_pvdid_padding, tvb, opt_offset, padding, ENC_NA);
+                opt_offset += padding;
+              }
+
+              if (flags & 0x20) {
+                /* Router advertisement message header present */
+                opt_offset += 4; /* Ignoring first 4 bytes */
+                opt_offset = dissect_icmpv6_nd_ra_header(tvb, opt_offset, icmp6opt_tree);
+              }
+
+              /* Show options */
+              if (opt_len - (opt_offset - offset)) {
+                opt_tvb = tvb_new_subset_length(tvb, opt_offset, opt_len - (opt_offset - offset));
+                opt_offset += dissect_icmpv6_nd_opt(opt_tvb, 0, pinfo, icmp6opt_tree);
+              }
+              break;
             }
             break;
             default :
@@ -4163,35 +4262,8 @@ dissect_icmpv6(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data)
             }
             case ICMP6_ND_ROUTER_ADVERT: /* Router Advertisement (134) */
             {
-                static const int * nd_ra_flags[] = {
-                    &hf_icmpv6_nd_ra_flag_m,
-                    &hf_icmpv6_nd_ra_flag_o,
-                    &hf_icmpv6_nd_ra_flag_h,
-                    &hf_icmpv6_nd_ra_flag_prf,
-                    &hf_icmpv6_nd_ra_flag_p,
-                    &hf_icmpv6_nd_ra_flag_rsv,
-                    NULL
-                };
-
-                /* Current hop limit */
-                proto_tree_add_item(icmp6_tree, hf_icmpv6_nd_ra_cur_hop_limit, tvb, offset, 1, ENC_BIG_ENDIAN);
-                offset += 1;
-
-                /* Flags */
-                proto_tree_add_bitmask(icmp6_tree, tvb, offset, hf_icmpv6_nd_ra_flag, ett_icmpv6_flag_ra, nd_ra_flags, ENC_BIG_ENDIAN);
-                offset += 1;
-
-                /* Router lifetime */
-                proto_tree_add_item(icmp6_tree, hf_icmpv6_nd_ra_router_lifetime, tvb, offset, 2, ENC_BIG_ENDIAN);
-                offset += 2;
-
-                /* Reachable time */
-                proto_tree_add_item(icmp6_tree, hf_icmpv6_nd_ra_reachable_time, tvb, offset, 4, ENC_BIG_ENDIAN);
-                offset += 4;
-
-                /* Retrans timer */
-                proto_tree_add_item(icmp6_tree, hf_icmpv6_nd_ra_retrans_timer, tvb, offset, 4, ENC_BIG_ENDIAN);
-                offset += 4;
+                /* RA Message header */
+                offset = dissect_icmpv6_nd_ra_header(tvb, offset, icmp6_tree);
 
                 /* Show options */
                 offset = dissect_icmpv6_nd_opt(tvb, offset, pinfo, icmp6_tree);
@@ -5019,6 +5091,32 @@ proto_register_icmpv6(void)
         { &hf_icmpv6_opt_captive_portal,
            { "Captive Portal", "icmpv6.opt.captive_portal", FT_STRING, BASE_NONE, NULL, 0x00,
              "The contact URI for the captive portal that the user should connect to", HFILL }},
+
+        { &hf_icmpv6_opt_pvdid_flag,
+          { "PvD ID flags", "icmpv6.opt.pvdid.flag", FT_UINT16, BASE_HEX, NULL, 0x00,
+            NULL, HFILL }},
+        { &hf_icmpv6_opt_pvdid_flag_h,
+          { "HTTPS Available", "icmpv6.opt.pvdid.flag.h", FT_BOOLEAN, 16, TFS(&tfs_set_notset), 0x8000,
+            "Indicates that PvD Additional Information is available using HTTPS", HFILL }},
+        { &hf_icmpv6_opt_pvdid_flag_l,
+          { "IPv4 PvD", "icmpv6.opt.pvdid.flag.l", FT_BOOLEAN, 16, TFS(&tfs_set_notset), 0x4000,
+            "Indicates that the PvD applies to DHCPv4 configuration", HFILL }},
+        { &hf_icmpv6_opt_pvdid_flag_a,
+          { "RA Header Present", "icmpv6.opt.pvdid.flag.a", FT_BOOLEAN, 16, TFS(&tfs_set_notset), 0x2000,
+            "Indicates that a RA header is present in the option", HFILL }},
+        { &hf_icmpv6_opt_pvdid_flag_reserved,
+          { "Reserved", "icmpv6.opt.pvdid.flag.reserved", FT_UINT16, BASE_DEC, NULL, 0x1fff,
+            "Reserved for future use", HFILL }},
+        { &hf_icmpv6_opt_pvdid_sequence,
+          { "Sequence Number", "icmpv6.opt.pvdid.sequence", FT_UINT16, BASE_DEC, NULL, 0x00,
+            "PvD Sequence Number", HFILL }},
+        { &hf_icmpv6_opt_pvdid_fqdn,
+          { "PvD ID", "icmpv6.opt.pvdid.fqdn", FT_STRING, BASE_NONE, NULL, 0x0,
+            "The PvD ID Fully Qualified Domain Name", HFILL }},
+        { &hf_icmpv6_opt_pvdid_padding,
+          { "Padding", "icmpv6.opt.pvdid.padding", FT_BYTES, BASE_NONE, NULL, 0x0,
+            "A variable-length field making the option length a multiple of 8", HFILL }},
+
 
         /* RFC2710:  Multicast Listener Discovery for IPv6 */
         { &hf_icmpv6_mld_mrd,
@@ -5895,7 +5993,8 @@ proto_register_icmpv6(void)
         &ett_icmpv6_opt_name,
         &ett_icmpv6_cga_param_name,
         &ett_icmpv6_mpl_seed_info,
-        &ett_icmpv6_mpl_seed_info_bm
+        &ett_icmpv6_mpl_seed_info_bm,
+        &ett_icmpv6_flag_pvdid
     };
 
     static ei_register_info ei[] = {
