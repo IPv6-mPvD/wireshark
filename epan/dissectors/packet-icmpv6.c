@@ -923,6 +923,7 @@ static const true_false_string tfs_ni_flag_a = {
 #define ND_OPT_NEW_ROUTER_PREFIX_INFO   18
 #define ND_OPT_LINK_LAYER_ADDRESS       19
 #define ND_OPT_NEIGHBOR_ADV_ACK         20
+#define ND_OPT_PVDID                    21
 #define ND_OPT_MAP                      23
 #define ND_OPT_ROUTE_INFO               24
 #define ND_OPT_RECURSIVE_DNS_SERVER     25
@@ -938,7 +939,6 @@ static const true_false_string tfs_ni_flag_a = {
 #define ND_OPT_AUTH_BORDER_ROUTER       35
 #define ND_OPT_6CIO                     36
 #define ND_OPT_CAPPORT                  37
-#define ND_OPT_PVDID                    254
 
 static const value_string option_vals[] = {
 /*  1 */   { ND_OPT_SOURCE_LINKADDR,           "Source link-layer address" },
